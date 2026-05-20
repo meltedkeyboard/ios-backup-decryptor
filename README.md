@@ -133,6 +133,17 @@ python ./src/main.py \
   extract Library/SMS/sms.db
 ```
 
+### extract-domain
+
+Extract all files from one specidfied domain only:
+
+```bash
+python ./src/main.py \
+  --backup <BACKUP_PATH> \
+  --password <PASSWORD> \
+  extract-domain CameraRollDomain
+```
+
 ### write-back
 
 Re-encrypt a modified workspace file and write it back into the original backup.
