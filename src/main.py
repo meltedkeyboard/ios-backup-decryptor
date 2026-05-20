@@ -31,7 +31,6 @@ def cmd_unlock(args: argparse.Namespace) -> None:
 
 def cmd_decrypt(args: argparse.Namespace) -> None:
     ws = open_workspace(args)
-
     total = len(ws.entries)
     log_info(f"Decryption of {total} entries to workspace...")
 
@@ -59,9 +58,50 @@ def cmd_decrypt(args: argparse.Namespace) -> None:
     log_ok(f"Decrypted {ok_count} files, skipped {skip_count}, failed {fail_count}")
     log_info(f"Output: {ws.workspace_plain_root()}")
 
+
+def cmd_extract_domain(args: argparse.Namespace) -> None:
+    ws = open_workspace(args)
+    domain = args.domain.strip()
+    if not domain:
+        log_fail("Domain must not be empty.")
+        sys.exit(1)
+
+    matched = [entry for entry in ws.entries if entry.domain.lower() == domain.lower()]
+    if not matched:
+        log_warn(f"No entries found for domain: {domain}")
+        return
+
+    log_info(f"Extracting {len(matched)} entries from domain '{domain}'...")
+    bar = ProgressBar(total=len(matched), label="extract-domain")
+    ok_count = 0
+    skip_count = 0
+    fail_count = 0
+
+    for entry in matched:
+        try:
+            out = ws.decrypt_entry_to_workspace(entry)
+            if out is not None:
+                ok_count += 1
+            else:
+                skip_count += 1
+        except Exception as exc:
+            fail_count += 1
+            log_warn(f"Skipped {entry.file_id[:8]}... ({entry.domain}/{entry.relative_path}): {exc}")
+        bar.advance()
+
+    bar.finish()
+
+    if fail_count:
+        log_warn(f"{fail_count} entries failed (see warnings above)")
+
+    log_ok(
+        f"Extracted domain '{domain}': {ok_count} files, skipped {skip_count}, failed {fail_count}"
+    )
+    log_info(f"Output: {ws.workspace_plain_root()}")
+
+
 def cmd_list(args: argparse.Namespace) -> None:
     ws = open_workspace(args)
-
     domain_filter: str = (args.domain or "").strip().lower()
     path_filter: str = (args.filter or "").strip().lower()
 
@@ -77,16 +117,16 @@ def cmd_list(args: argparse.Namespace) -> None:
 
     log_info(f"Showing {len(entries)} of {len(ws.entries)} entries:\n")
 
-    col_id     = 10
+    col_id = 10
     col_domain = 44
-    col_flags  = 6
-    col_size   = 10
+    col_flags = 6
+    col_size = 10
 
     header = (
-        f"{'FILE_ID':<{col_id}}  "
-        f"{'DOMAIN':<{col_domain}}  "
-        f"{'FLAGS':<{col_flags}}  "
-        f"{'SIZE':>{col_size}}  "
+        f"{'FILE_ID':<{col_id}} "
+        f"{'DOMAIN':<{col_domain}} "
+        f"{'FLAGS':<{col_flags}} "
+        f"{'SIZE':>{col_size}} "
         f"RELATIVE_PATH"
     )
     print(header)
@@ -96,29 +136,32 @@ def cmd_list(args: argparse.Namespace) -> None:
         size = e.meta.get("size", "")
         size_str = f"{size:,}" if isinstance(size, int) else str(size or "-")
         print(
-            f"{e.file_id[:8]:<{col_id}}  "
-            f"{e.domain[:col_domain]:<{col_domain}}  "
-            f"{e.flags:<{col_flags}}  "
-            f"{size_str:>{col_size}}  "
+            f"{e.file_id[:8]:<{col_id}} "
+            f"{e.domain[:col_domain]:<{col_domain}} "
+            f"{e.flags:<{col_flags}} "
+            f"{size_str:>{col_size}} "
             f"{e.relative_path}"
         )
 
     print()
     log_info(f"Total: {len(entries)} entries")
 
+
 def find_entry(ws: BackupWorkspace, selector: str) -> FileEntry:
     by_id = [e for e in ws.entries if e.file_id.startswith(selector)]
     if len(by_id) == 1:
         return by_id[0]
     if len(by_id) > 1:
-        log_fail(f"Ambiguous fileID prefix '{selector}' matches {len(by_id)} entries. Use more characters.")
+        log_fail(f"Ambiguous fileID prefix '{selector}' matches {len(by_id)} entries.")
+        log_fail("Use more characters.")
         sys.exit(1)
 
     by_path = [e for e in ws.entries if e.relative_path == selector]
     if len(by_path) == 1:
         return by_path[0]
     if len(by_path) > 1:
-        log_warn(f"Path '{selector}' appears in {len(by_path)} domains. Picking the first match.")
+        log_warn(f"Path '{selector}' appears in {len(by_path)} domains.")
+        log_warn("Picking the first match.")
         log_warn("Use --file-id for an unambiguous selection.")
         return by_path[0]
 
@@ -127,36 +170,36 @@ def find_entry(ws: BackupWorkspace, selector: str) -> FileEntry:
 
 def cmd_extract(args: argparse.Namespace) -> None:
     ws = open_workspace(args)
-
     selector: str = args.selector
     log_info(f"Resolving entry: {selector}")
     entry = find_entry(ws, selector)
 
-    log_info(f"Entry:  {entry.domain} / {entry.relative_path}")
+    log_info(f"Entry: {entry.domain} / {entry.relative_path}")
     log_info(f"FileID: {entry.file_id}")
-    log_info(f"Flags:  {entry.flags}  |  Protection class: {entry.meta.get('protection_class')}")
-    log_info(f"Size:   {entry.meta.get('size', 'unknown')} bytes")
+    log_info(f"Flags: {entry.flags} | Protection class: {entry.meta.get('protection_class')}")
+    log_info(f"Size: {entry.meta.get('size', 'unknown')} bytes")
 
     if entry.flags != 1:
-        log_warn("Selected entry is not a regular file (flags != 1). Nothing to extract.")
+        log_warn("Selected entry is not a regular file (flags != 1).")
+        log_warn("Nothing to extract.")
         return
 
     out_path = ws.decrypt_entry_to_workspace(entry)
     if out_path is None:
-        log_fail("Decryption returned no output. Entry may have no encryption key or unsupported flags.")
+        log_fail("Decryption returned no output.")
+        log_fail("Entry may have no encryption key or unsupported flags.")
         sys.exit(1)
 
     log_ok(f"Extracted to: {out_path}")
 
 def cmd_write_back(args: argparse.Namespace) -> None:
     ws = open_workspace(args)
-
     selector: str = args.selector
     log_info(f"Resolving entry: {selector}")
     entry = find_entry(ws, selector)
 
-    log_info(f"Entry:     {entry.domain} / {entry.relative_path}")
-    log_info(f"FileID:    {entry.file_id}")
+    log_info(f"Entry: {entry.domain} / {entry.relative_path}")
+    log_info(f"FileID: {entry.file_id}")
 
     workspace_path = ws.workspace_path_for_entry(entry)
     if not workspace_path.exists():
@@ -164,26 +207,25 @@ def cmd_write_back(args: argparse.Namespace) -> None:
         log_fail("Run 'extract' first, edit the file, then run 'write-back'.")
         sys.exit(1)
 
-    log_info(f"Source:    {workspace_path}")
+    log_info(f"Source: {workspace_path}")
     log_info("Re-encrypting and writing back into backup...")
-
     write_entry_back(ws, entry)
     log_ok(f"Written back: {ws.backup_root / entry.file_id[:2] / entry.file_id}")
 
 
 def cmd_commit(args: argparse.Namespace) -> None:
     ws = open_workspace(args)
-
     if ws.decrypted_manifest_db_path is None or not ws.decrypted_manifest_db_path.exists():
-        log_fail("Decrypted Manifest.db not found in workspace. Run 'unlock' first.")
+        log_fail("Decrypted Manifest.db not found in workspace.")
+        log_fail("Run 'unlock' first.")
         sys.exit(1)
 
-    log_info(f"Source:  {ws.decrypted_manifest_db_path}")
-    log_info(f"Target:  {ws.backup_root / 'Manifest.db'}")
+    log_info(f"Source: {ws.decrypted_manifest_db_path}")
+    log_info(f"Target: {ws.backup_root / 'Manifest.db'}")
     log_info("Re-encrypting Manifest.db...")
-
     reencrypt_manifest_db(ws)
     log_ok("Manifest.db committed back to backup.")
+
 
 def build_parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
@@ -192,10 +234,14 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="GitHub: https://github.com/meltedkeyboard/ios-backup-decryptor",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-
     root.add_argument("--backup", required=True, metavar="PATH", help="Path to the iOS backup folder")
     root.add_argument("--password", required=True, metavar="PWD", help="Backup encryption password")
-    root.add_argument("--workspace", default=str(DEFAULT_WORKSPACE), metavar="PATH", help=f"Workspace output folder (default: {DEFAULT_WORKSPACE})")
+    root.add_argument(
+        "--workspace",
+        default=str(DEFAULT_WORKSPACE),
+        metavar="PATH",
+        help=f"Workspace output folder (default: {DEFAULT_WORKSPACE})",
+    )
 
     sub = root.add_subparsers(dest="command", metavar="COMMAND")
     sub.required = True
@@ -210,11 +256,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_extract = sub.add_parser("extract", help="Extract a single file by fileID prefix or relative path")
     p_extract.add_argument("selector", metavar="FILE_ID_OR_PATH", help="fileID prefix (>=8 chars) or exact relative path")
 
+    p_domain = sub.add_parser("extract-domain", help="Extract all files from a single domain into the workspace")
+    p_domain.add_argument("domain", metavar="DOMAIN", help="Exact domain name to extract")
+
     p_wb = sub.add_parser("write-back", help="Re-encrypt a modified workspace file back into the backup")
     p_wb.add_argument("selector", metavar="FILE_ID_OR_PATH", help="fileID prefix (>=8 chars) or exact relative path")
 
     sub.add_parser("commit", help="Re-encrypt the modified Manifest.db back into the backup")
     return root
+
 
 def main() -> None:
     parser = build_parser()
@@ -225,6 +275,7 @@ def main() -> None:
         "decrypt": cmd_decrypt,
         "list": cmd_list,
         "extract": cmd_extract,
+        "extract-domain": cmd_extract_domain,
         "write-back": cmd_write_back,
         "commit": cmd_commit,
     }
@@ -242,7 +293,6 @@ def main() -> None:
         if "--debug" in sys.argv:
             traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
